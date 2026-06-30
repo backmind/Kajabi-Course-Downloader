@@ -766,12 +766,17 @@ def _build_argparser():
     tp.add_argument("--replace", action="store_true")
     tp.add_argument("--jobs", type=int, default=config.getint("Transcode", "jobs", fallback=1))
     tp.add_argument("--dry-run", dest="dry_run", action="store_true")
+
+    cp = sub.add_parser("catalog")
+    cp.add_argument("input", help="Carpeta raiz a catalogar")
+    cp.add_argument("--json", default="catalog.json", help="Ruta del indice JSON de salida")
+    cp.add_argument("--csv", default="catalog.csv", help="Ruta del indice CSV de salida")
     return p
 
 
 if __name__ == "__main__":
     _args = _build_argparser().parse_args()
-    if _args.command in ("scan", "diff", "sync", "transcode"):
+    if _args.command in ("scan", "diff", "sync", "transcode", "catalog"):
         from kjsync import cli
         raise SystemExit(getattr(cli, f"cmd_{_args.command}")(_args))
     _run_full_download()

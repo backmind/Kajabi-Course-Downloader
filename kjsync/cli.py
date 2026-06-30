@@ -185,3 +185,13 @@ def cmd_transcode(args):
     print(f"\nResumen: {summary['transcoded']} transcodificados, {summary['copied']} copiados, "
           f"{summary['skipped']} saltados, {len(summary['failed'])} fallidos -> {out}")
     return 1 if summary["failed"] else 0
+
+
+def cmd_catalog(args):
+    from kjsync import catalog
+    entries = catalog.build_catalog(args.input)
+    catalog.write_json(entries, args.json)
+    catalog.write_csv(entries, args.csv)
+    vids = sum(1 for e in entries if e["kind"] == "video")
+    print(f"Catalogo: {len(entries)} ficheros ({vids} videos) -> {args.json} ; {args.csv}")
+    return 0
