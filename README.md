@@ -107,6 +107,29 @@ a partir de la segunda, el diff es exacto por `post_id` y detecta tambien cambio
 borrados. El comportamiento de descarga completa original se mantiene ejecutando
 `uv run python kajabi.py` sin subcomando.
 
+## Transcode to HEVC (optional)
+
+Re-encode downloaded videos to H.265/HEVC with ffmpeg to save space. Course-agnostic;
+requires `ffmpeg` on PATH. Picks the best available hardware encoder and falls back to CPU.
+
+```bash
+# Transcode a folder tree (mirrors structure into <input>_hevc, copies non-video through):
+uv run python kajabi.py transcode "path/to/course"
+
+# Choose encoder explicitly (auto-detects and falls back if unavailable):
+uv run python kajabi.py transcode "path/to/course" --encoder libx265 --crf 22
+
+# Preview without encoding:
+uv run python kajabi.py transcode "path/to/course" --dry-run
+
+# As part of a sync (transcode the freshly downloaded delta):
+uv run python kajabi.py sync --transcode
+```
+
+Flags: `--encoder auto|nvenc|qsv|amf|libx265`, `--crf`/`--cq`, `--preset`, `--tag`,
+`--res-tag`, `--no-copy-nonvideo`, `--embed-metadata`, `--replace`, `--jobs N`, `--dry-run`.
+Defaults live in `config.ini [Transcode]`.
+
 ## Project Structure
 
 ```
