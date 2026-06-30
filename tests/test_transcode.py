@@ -55,3 +55,26 @@ def test_output_name_and_idempotency():
     assert transcode.output_name("01 - Intro.mp4", "h265") == "01 - Intro [h265].mp4"
     assert transcode.already_transcoded("01 - Intro [h265].mp4", "h265") is True
     assert transcode.already_transcoded("01 - Intro.mp4", "h265") is False
+
+
+def test_parse_path_metadata():
+    meta = transcode.parse_path_metadata("Curso X/Bloque 1/03 - La leccion.mp4")
+    assert meta["course"] == "Curso X"
+    assert meta["block"] == "Bloque 1"
+    assert meta["track"] == "03"
+    assert meta["title"] == "La leccion"
+
+
+def test_build_metadata_args():
+    args = transcode.build_metadata_args({"course": "C", "block": "B", "track": "3", "title": "T"})
+    assert "-metadata" in args
+    assert "title=T" in args
+    assert "album=C" in args
+
+
+def test_plan_tree_classifies():
+    files = ["a/01 - v.mp4", "a/02 - v [h265].mp4", "a/doc.pdf"]
+    plan = transcode.plan_tree(files, transcode.VIDEO_EXTS, "h265")
+    assert plan["transcode"] == ["a/01 - v.mp4"]
+    assert plan["skip"] == ["a/02 - v [h265].mp4"]
+    assert plan["copy"] == ["a/doc.pdf"]

@@ -71,3 +71,44 @@ def output_name(src_name, tag):
 
 def already_transcoded(src_name, tag):
     return f"[{tag}]" in src_name
+
+
+def parse_path_metadata(rel_path):
+    parts = [p for p in re.split(r"[\\/]+", rel_path) if p]
+    course = parts[0] if len(parts) >= 1 else ""
+    block = parts[1] if len(parts) >= 3 else ""
+    fname = os.path.splitext(parts[-1])[0] if parts else ""
+    m = re.match(r"^\s*(\d+)\s*-\s*(.+)$", fname)
+    if m:
+        track, title = m.group(1), m.group(2).strip()
+    else:
+        track, title = "", fname
+    return {"course": course, "block": block, "track": track, "title": title}
+
+
+def build_metadata_args(meta):
+    args = []
+    if meta.get("title"):
+        args += ["-metadata", f"title={meta['title']}"]
+    if meta.get("course"):
+        args += ["-metadata", f"album={meta['course']}"]
+    if meta.get("block"):
+        args += ["-metadata", f"album_artist={meta['block']}"]
+    if meta.get("track"):
+        args += ["-metadata", f"track={meta['track']}"]
+    return args
+
+
+def plan_tree(rel_files, video_exts, tag):
+    plan = {"transcode": [], "copy": [], "skip": []}
+    for rel in rel_files:
+        ext = os.path.splitext(rel)[1].lower()
+        name = os.path.basename(rel)
+        if ext in video_exts:
+            if already_transcoded(name, tag):
+                plan["skip"].append(rel)
+            else:
+                plan["transcode"].append(rel)
+        else:
+            plan["copy"].append(rel)
+    return plan
