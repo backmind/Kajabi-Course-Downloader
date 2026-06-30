@@ -37,7 +37,7 @@ def build_catalog(root):
     for dirpath, _dirs, files in os.walk(root):
         for f in files:
             full = os.path.join(dirpath, f)
-            rel = os.path.relpath(full, root)
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
             try:
                 size = os.path.getsize(full)
             except OSError:

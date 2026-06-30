@@ -205,7 +205,11 @@ def cmd_transcode(args):
 
 
 def cmd_catalog(args):
+    import os
     from kjsync import catalog
+    if not os.path.isdir(args.input):
+        print(f"ERROR: no existe la carpeta: {args.input}")
+        return 1
     entries = catalog.build_catalog(args.input)
     catalog.write_json(entries, args.json)
     catalog.write_csv(entries, args.csv)

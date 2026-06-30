@@ -44,3 +44,12 @@ def test_build_and_write(tmp_path):
     csv_text = open(cpath, encoding="utf-8").read()
     assert "relative_path" in csv_text.splitlines()[0]
     assert "intro" in csv_text
+
+
+def test_build_catalog_uses_forward_slashes(tmp_path):
+    d = tmp_path / "lib" / "Curso" / "Bloque"
+    d.mkdir(parents=True)
+    (d / "01 - v.mp4").write_bytes(b"x")
+    entries = catalog.build_catalog(str(tmp_path / "lib"))
+    assert all("\\" not in e["relative_path"] for e in entries)
+    assert entries[0]["relative_path"] == "Curso/Bloque/01 - v.mp4"
