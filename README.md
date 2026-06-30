@@ -130,6 +130,15 @@ Flags: `--encoder auto|nvenc|qsv|amf|libx265`, `--crf`/`--cq`, `--preset`, `--ta
 `--res-tag`, `--no-copy-nonvideo`, `--embed-metadata`, `--replace`, `--jobs N`, `--dry-run`.
 Defaults live in `config.ini [Transcode]`.
 
+## Catalog / index
+
+Generate a JSON + CSV index of a downloaded course tree (course, block, track, title,
+kind, size, path). Course-agnostic; pure filesystem walk.
+
+```bash
+uv run python kajabi.py catalog "path/to/library" --json catalog.json --csv catalog.csv
+```
+
 ## Project Structure
 
 ```
