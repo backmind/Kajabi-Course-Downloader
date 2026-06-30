@@ -78,3 +78,7 @@ def test_plan_tree_classifies():
     assert plan["transcode"] == ["a/01 - v.mp4"]
     assert plan["skip"] == ["a/02 - v [h265].mp4"]
     assert plan["copy"] == ["a/doc.pdf"]
+
+
+def test_is_ffmpeg_available_returns_bool():
+    assert isinstance(transcode.is_ffmpeg_available(), bool)

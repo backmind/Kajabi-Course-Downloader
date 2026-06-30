@@ -112,3 +112,125 @@ def plan_tree(rel_files, video_exts, tag):
         else:
             plan["copy"].append(rel)
     return plan
+
+
+def is_ffmpeg_available():
+    return shutil.which("ffmpeg") is not None
+
+
+def detect_hevc_encoders():
+    if not is_ffmpeg_available():
+        return []
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                             capture_output=True, text=True, timeout=30)
+        return parse_hevc_encoders(out.stdout)
+    except Exception:
+        return []
+
+
+def probe_height(path):
+    if shutil.which("ffprobe") is None:
+        return None
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                              "-show_entries", "stream=height", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30)
+        line = out.stdout.strip().splitlines()[0]
+        return int(line)
+    except Exception:
+        return None
+
+
+def transcode_file(src, dst, cmd):
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0 and os.path.exists(dst) and os.path.getsize(dst) > 0:
+            return True
+        if os.path.exists(dst) and os.path.getsize(dst) == 0:
+            os.remove(dst)
+        return False
+    except Exception:
+        return False
+
+
+def transcode_tree(input_root, output_root, encoder="auto", crf=23, cq=28, preset=None,
+                   tag="h265", res_tag=False, copy_nonvideo=True, embed_metadata=False,
+                   replace=False, jobs=1, dry_run=False, progress=print):
+    if not is_ffmpeg_available():
+        progress("ERROR: ffmpeg no encontrado en PATH.")
+        return {"error": "no-ffmpeg"}
+    available = detect_hevc_encoders()
+    enc = choose_encoder(encoder, available)
+    if enc is None:
+        progress("ERROR: ningun encoder HEVC disponible.")
+        return {"error": "no-encoder"}
+    if _alias(encoder) != "auto" and enc != _alias(encoder):
+        progress(f"AVISO: encoder '{encoder}' no disponible; usando '{enc}'.")
+    progress(f"Encoder: {enc}")
+
+    rel_files = []
+    for dirpath, _dirs, files in os.walk(input_root):
+        for f in files:
+            rel_files.append(os.path.relpath(os.path.join(dirpath, f), input_root))
+    plan = plan_tree(rel_files, VIDEO_EXTS, tag)
+    progress(f"Plan: {len(plan['transcode'])} transcode, {len(plan['copy'])} copy, {len(plan['skip'])} skip")
+
+    summary = {"encoder": enc, "transcoded": 0, "copied": 0,
+               "skipped": len(plan["skip"]), "failed": []}
+
+    if dry_run:
+        for rel in plan["transcode"]:
+            progress(f"  [T] {rel}")
+        if copy_nonvideo:
+            for rel in plan["copy"]:
+                progress(f"  [C] {rel}")
+        summary["dry_run"] = True
+        return summary
+
+    if copy_nonvideo:
+        for rel in plan["copy"]:
+            dst = os.path.join(output_root, rel)
+            os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+            if not os.path.exists(dst):
+                shutil.copy2(os.path.join(input_root, rel), dst)
+            summary["copied"] += 1
+
+    def _do(rel):
+        src = os.path.join(input_root, rel)
+        local_tag = tag
+        if res_tag:
+            h = probe_height(src)
+            if h:
+                local_tag = f"{tag}_{h}p"
+        dst_name = output_name(os.path.basename(rel), local_tag)
+        dst = os.path.join(output_root, os.path.dirname(rel), dst_name)
+        if os.path.exists(dst) and os.path.getsize(dst) > 0:
+            return ("skip", rel)
+        meta_args = build_metadata_args(parse_path_metadata(rel)) if embed_metadata else None
+        cmd = build_ffmpeg_cmd(src, dst, enc, crf=crf, cq=cq, preset=preset, metadata_args=meta_args)
+        ok = transcode_file(src, dst, cmd)
+        if ok and replace:
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+        return ("ok" if ok else "fail", rel)
+
+    if jobs > 1:
+        with ThreadPoolExecutor(max_workers=jobs) as ex:
+            results = list(ex.map(_do, plan["transcode"]))
+    else:
+        results = [_do(rel) for rel in plan["transcode"]]
+
+    for status, rel in results:
+        if status == "ok":
+            summary["transcoded"] += 1
+            progress(f"  OK {rel}")
+        elif status == "skip":
+            summary["skipped"] += 1
+        else:
+            summary["failed"].append(rel)
+            progress(f"  FALLO {rel}")
+    return summary
