@@ -154,6 +154,15 @@ def cmd_sync(args):
     if failed_pids:
         _drop_lessons(new, failed_pids)
 
+    if getattr(args, "transcode", False) and not args.dry_run and to_download:
+        from kjsync import transcode as tc
+        if tc.is_ffmpeg_available():
+            out = args.transcode_output or (args.staging_dir.rstrip("/\\") + "_hevc")
+            print(f"\nTranscodificando staging -> {out}")
+            tc.transcode_tree(args.staging_dir, out, progress=print)
+        else:
+            print("AVISO: --transcode pedido pero ffmpeg no esta disponible; se omite.")
+
     if prior_file is not None and args.course:
         to_save = _merge_scanned_into_prior(prior_file, new)
     else:

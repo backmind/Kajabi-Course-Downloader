@@ -743,7 +743,11 @@ def _build_argparser():
         sp.add_argument("--yes", action="store_true")
 
     for name in ("scan", "diff", "sync"):
-        add_common(sub.add_parser(name))
+        sp = sub.add_parser(name)
+        add_common(sp)
+        if name == "sync":
+            sp.add_argument("--transcode", action="store_true")
+            sp.add_argument("--transcode-output", dest="transcode_output", default=None)
 
     tcfg = lambda k, d: config.get("Transcode", k, fallback=d)
     tp = sub.add_parser("transcode")
