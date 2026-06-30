@@ -161,3 +161,18 @@ def cmd_sync(args):
     model.save_manifest(to_save, args.manifest)
     print(f"Manifiesto actualizado en {args.manifest}")
     return 0
+
+
+def cmd_transcode(args):
+    from kjsync import transcode
+    out = args.output or (args.input.rstrip("/\\") + "_hevc")
+    summary = transcode.transcode_tree(
+        args.input, out, encoder=args.encoder, crf=args.crf, cq=args.cq,
+        preset=(args.preset or None), tag=args.tag, res_tag=args.res_tag,
+        copy_nonvideo=args.copy_nonvideo, embed_metadata=args.embed_metadata,
+        replace=args.replace, jobs=args.jobs, dry_run=args.dry_run)
+    if summary.get("error"):
+        return 1
+    print(f"\nResumen: {summary['transcoded']} transcodificados, {summary['copied']} copiados, "
+          f"{summary['skipped']} saltados, {len(summary['failed'])} fallidos -> {out}")
+    return 1 if summary["failed"] else 0
