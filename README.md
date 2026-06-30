@@ -79,6 +79,34 @@ python kajabi.py
    - Press `Ctrl+C` again to resume
    - Press `Ctrl+C` twice quickly to exit
 
+## Incremental Sync
+
+Detecta lecciones nuevas/cambiadas/borradas frente a la ultima sincronizacion y
+descarga solo el delta a una carpeta de staging (no toca tu biblioteca curada).
+
+```bash
+# Ver que cambio sin descargar nada (escaneo estructural rapido):
+uv run python kajabi.py sync --dry-run
+
+# Acotar a un curso:
+uv run python kajabi.py sync --course armonia-avanzada --dry-run
+
+# Chequeo profundo (detecta videos resubidos con el mismo titulo; lento):
+uv run python kajabi.py sync --deep --course armonia-avanzada --dry-run
+
+# Descargar el delta a staging (pide confirmacion):
+uv run python kajabi.py sync
+
+# Solo escanear / solo comparar:
+uv run python kajabi.py scan
+uv run python kajabi.py diff
+```
+
+La primera corrida siembra la base desde `download_log.csv` (aproximada por titulo);
+a partir de la segunda, el diff es exacto por `post_id` y detecta tambien cambios y
+borrados. El comportamiento de descarga completa original se mantiene ejecutando
+`uv run python kajabi.py` sin subcomando.
+
 ## Project Structure
 
 ```
