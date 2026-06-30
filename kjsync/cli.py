@@ -44,13 +44,30 @@ def cmd_diff(args):
         print(f"ERROR: no existe {args.manifest}; corre 'scan' primero")
         return 1
     # Para 'diff' suelto comparamos el manifiesto guardado contra la base sembrada
-    baseline = seed.seed_manifest_from_csv(args.seed_csv, _now()) if os.path.exists(args.seed_csv) else model.new_manifest(_now())
+    baseline = seed.seed_manifest_from_csv(args.seed_csv, _now()) if args.seed_csv and os.path.exists(args.seed_csv) else model.new_manifest(_now())
     result = diffmod.diff_manifests(baseline, new)
     md = reportmod.render_report(result, new.get("scanned_at", ""), args.deep)
     with open(args.report, "w", encoding="utf-8") as f:
         f.write(md)
     print(md)
     return 0
+
+
+def _transcode_config():
+    import configparser
+    c = configparser.ConfigParser()
+    c.read("config.ini")
+    if not c.has_section("Transcode"):
+        return {}
+    return {
+        "encoder": c.get("Transcode", "encoder", fallback="auto"),
+        "crf": c.getint("Transcode", "crf", fallback=23),
+        "cq": c.getint("Transcode", "cq", fallback=28),
+        "preset": c.get("Transcode", "preset", fallback="") or None,
+        "tag": c.get("Transcode", "tag", fallback="h265"),
+        "copy_nonvideo": c.getboolean("Transcode", "copy_nonvideo", fallback=True),
+        "jobs": c.getint("Transcode", "jobs", fallback=1),
+    }
 
 
 def _seed_or_empty(args):
@@ -154,10 +171,48 @@ def cmd_sync(args):
     if failed_pids:
         _drop_lessons(new, failed_pids)
 
+    if getattr(args, "transcode", False) and not args.dry_run and to_download:
+        from kjsync import transcode as tc
+        if tc.is_ffmpeg_available():
+            out = args.transcode_output or (args.staging_dir.rstrip("/\\") + "_hevc")
+            print(f"\nTranscodificando staging -> {out}")
+            tc.transcode_tree(args.staging_dir, out, progress=print, **_transcode_config())
+        else:
+            print("AVISO: --transcode pedido pero ffmpeg no esta disponible; se omite.")
+
     if prior_file is not None and args.course:
         to_save = _merge_scanned_into_prior(prior_file, new)
     else:
         to_save = new
     model.save_manifest(to_save, args.manifest)
     print(f"Manifiesto actualizado en {args.manifest}")
+    return 0
+
+
+def cmd_transcode(args):
+    from kjsync import transcode
+    out = args.output or (args.input.rstrip("/\\") + "_hevc")
+    summary = transcode.transcode_tree(
+        args.input, out, encoder=args.encoder, crf=args.crf, cq=args.cq,
+        preset=(args.preset or None), tag=args.tag, res_tag=args.res_tag,
+        copy_nonvideo=args.copy_nonvideo, embed_metadata=args.embed_metadata,
+        replace=args.replace, jobs=args.jobs, dry_run=args.dry_run)
+    if summary.get("error"):
+        return 1
+    print(f"\nResumen: {summary['transcoded']} transcodificados, {summary['copied']} copiados, "
+          f"{summary['skipped']} saltados, {len(summary['failed'])} fallidos -> {out}")
+    return 1 if summary["failed"] else 0
+
+
+def cmd_catalog(args):
+    import os
+    from kjsync import catalog
+    if not os.path.isdir(args.input):
+        print(f"ERROR: no existe la carpeta: {args.input}")
+        return 1
+    entries = catalog.build_catalog(args.input)
+    catalog.write_json(entries, args.json)
+    catalog.write_csv(entries, args.csv)
+    vids = sum(1 for e in entries if e["kind"] == "video")
+    print(f"Catalogo: {len(entries)} ficheros ({vids} videos) -> {args.json} ; {args.csv}")
     return 0

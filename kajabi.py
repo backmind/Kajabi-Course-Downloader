@@ -743,13 +743,41 @@ def _build_argparser():
         sp.add_argument("--yes", action="store_true")
 
     for name in ("scan", "diff", "sync"):
-        add_common(sub.add_parser(name))
+        sp = sub.add_parser(name)
+        add_common(sp)
+        if name == "sync":
+            sp.add_argument("--transcode", action="store_true")
+            sp.add_argument("--transcode-output", dest="transcode_output", default=None)
+
+    def tcfg(k, d):
+        return config.get("Transcode", k, fallback=d)
+    tp = sub.add_parser("transcode")
+    tp.add_argument("input", help="Carpeta raiz a transcodificar")
+    tp.add_argument("--output", default=None, help="Carpeta de salida (def: <input>_hevc)")
+    tp.add_argument("--encoder", default=tcfg("encoder", "auto"), help="auto|nvenc|qsv|amf|libx265")
+    tp.add_argument("--crf", type=int, default=config.getint("Transcode", "crf", fallback=23), help="Calidad CRF (libx265)")
+    tp.add_argument("--cq", type=int, default=config.getint("Transcode", "cq", fallback=28), help="Calidad CQ (hardware)")
+    tp.add_argument("--preset", default=tcfg("preset", ""), help="Preset del encoder")
+    tp.add_argument("--tag", default=tcfg("tag", "h265"), help="Tag en el nombre de salida")
+    tp.add_argument("--res-tag", dest="res_tag", action="store_true", help="Anadir resolucion al tag (h265_1080p)")
+    tp.add_argument("--copy-nonvideo", dest="copy_nonvideo", action="store_true",
+                    default=config.getboolean("Transcode", "copy_nonvideo", fallback=True), help="Copiar ficheros no-video")
+    tp.add_argument("--no-copy-nonvideo", dest="copy_nonvideo", action="store_false", help="No copiar no-video")
+    tp.add_argument("--embed-metadata", dest="embed_metadata", action="store_true", help="Embeber metadatos desde la ruta")
+    tp.add_argument("--replace", action="store_true", help="Borrar el original tras exito")
+    tp.add_argument("--jobs", type=int, default=config.getint("Transcode", "jobs", fallback=1), help="Transcodes en paralelo")
+    tp.add_argument("--dry-run", dest="dry_run", action="store_true", help="Solo mostrar el plan")
+
+    cp = sub.add_parser("catalog")
+    cp.add_argument("input", help="Carpeta raiz a catalogar")
+    cp.add_argument("--json", default="catalog.json", help="Ruta del indice JSON de salida")
+    cp.add_argument("--csv", default="catalog.csv", help="Ruta del indice CSV de salida")
     return p
 
 
 if __name__ == "__main__":
     _args = _build_argparser().parse_args()
-    if _args.command in ("scan", "diff", "sync"):
+    if _args.command in ("scan", "diff", "sync", "transcode", "catalog"):
         from kjsync import cli
         raise SystemExit(getattr(cli, f"cmd_{_args.command}")(_args))
     _run_full_download()

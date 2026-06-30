@@ -65,3 +65,8 @@ def test_lesson_fingerprint_fields():
 def test_lesson_fingerprint_empty():
     fp = extract.lesson_fingerprint("<html><body></body></html>")
     assert fp == {"wistia_id": None, "materials": [], "has_description": False}
+
+
+def test_extract_wistia_id_alt_patterns():
+    assert extract.extract_wistia_id('<a href="https://wistia.com/medias/abc123">') == "abc123"
+    assert extract.extract_wistia_id('src=".../embed/medias/xyz789.m3u8"') == "xyz789"
