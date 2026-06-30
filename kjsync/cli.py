@@ -44,13 +44,30 @@ def cmd_diff(args):
         print(f"ERROR: no existe {args.manifest}; corre 'scan' primero")
         return 1
     # Para 'diff' suelto comparamos el manifiesto guardado contra la base sembrada
-    baseline = seed.seed_manifest_from_csv(args.seed_csv, _now()) if os.path.exists(args.seed_csv) else model.new_manifest(_now())
+    baseline = seed.seed_manifest_from_csv(args.seed_csv, _now()) if args.seed_csv and os.path.exists(args.seed_csv) else model.new_manifest(_now())
     result = diffmod.diff_manifests(baseline, new)
     md = reportmod.render_report(result, new.get("scanned_at", ""), args.deep)
     with open(args.report, "w", encoding="utf-8") as f:
         f.write(md)
     print(md)
     return 0
+
+
+def _transcode_config():
+    import configparser
+    c = configparser.ConfigParser()
+    c.read("config.ini")
+    if not c.has_section("Transcode"):
+        return {}
+    return {
+        "encoder": c.get("Transcode", "encoder", fallback="auto"),
+        "crf": c.getint("Transcode", "crf", fallback=23),
+        "cq": c.getint("Transcode", "cq", fallback=28),
+        "preset": c.get("Transcode", "preset", fallback="") or None,
+        "tag": c.get("Transcode", "tag", fallback="h265"),
+        "copy_nonvideo": c.getboolean("Transcode", "copy_nonvideo", fallback=True),
+        "jobs": c.getint("Transcode", "jobs", fallback=1),
+    }
 
 
 def _seed_or_empty(args):
@@ -159,7 +176,7 @@ def cmd_sync(args):
         if tc.is_ffmpeg_available():
             out = args.transcode_output or (args.staging_dir.rstrip("/\\") + "_hevc")
             print(f"\nTranscodificando staging -> {out}")
-            tc.transcode_tree(args.staging_dir, out, progress=print)
+            tc.transcode_tree(args.staging_dir, out, progress=print, **_transcode_config())
         else:
             print("AVISO: --transcode pedido pero ffmpeg no esta disponible; se omite.")
 

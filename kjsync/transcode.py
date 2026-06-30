@@ -70,7 +70,7 @@ def output_name(src_name, tag):
 
 
 def already_transcoded(src_name, tag):
-    return f"[{tag}]" in src_name
+    return f"[{tag}]" in src_name or f"[{tag}_" in src_name
 
 
 def parse_path_metadata(rel_path):

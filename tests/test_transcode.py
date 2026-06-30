@@ -82,3 +82,9 @@ def test_plan_tree_classifies():
 
 def test_is_ffmpeg_available_returns_bool():
     assert isinstance(transcode.is_ffmpeg_available(), bool)
+
+
+def test_already_transcoded_recognizes_res_tag():
+    assert transcode.already_transcoded("v [h265].mp4", "h265") is True
+    assert transcode.already_transcoded("v [h265_1080p].mp4", "h265") is True
+    assert transcode.already_transcoded("v.mp4", "h265") is False
