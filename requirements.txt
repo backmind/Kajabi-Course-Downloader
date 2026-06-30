@@ -18,3 +18,6 @@ chromedriver-autoinstaller>=0.6.2
 
 # For handling retries and timeouts
 urllib3>=2.0.7
+
+# HTML parsing (sync engine)
+beautifulsoup4>=4.12.0

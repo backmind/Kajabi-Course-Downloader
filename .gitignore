@@ -6,3 +6,24 @@
 /migrate_csv_to_mongo.py
 /validation_results.csv
 /venv
+/.venv
+/.claude
+/nul
+
+# Artefactos generados por sync_dryrun.py
+/scan_manifest_dryrun.json
+/sync_report_dryrun.md
+/debug_course_page.html
+/debug_outline_*.html
+
+# Documentacion de diseno privada (vive en el repo privado del curador)
+/docs/superpowers/
+
+# Andamiaje de planificacion/orquestacion (solo local, nunca publico)
+/.superpowers/
+/.claude/
+*-brief.md
+*-report.md
+/staging/
+/sync_manifest.json
+/sync_report.md

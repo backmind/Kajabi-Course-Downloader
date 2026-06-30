@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import requests
 import threading
@@ -19,6 +20,12 @@ from tqdm import tqdm
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import traceback
 from datetime import datetime
+
+# Fix Windows console encoding for emojis and special characters
+if sys.platform == "win32":
+    import codecs
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
 
 # Configuration
 config = configparser.ConfigParser()
@@ -152,79 +159,134 @@ def selenium_download_video(driver, lesson_url, video_path, video_filename, cour
         try:
             print(f"    ℹ️ Attempt {attempt + 1}/{MAX_RETRIES} to download video: {video_filename}")
             driver.get(lesson_url)
-            WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
+            # Esperar a que cargue el cuerpo y posibles iframes
+            WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            time.sleep(3) # Pequeña espera extra para scripts JS
+
             # Check if on login page
             if "login" in driver.current_url:
                 print("    ⚠️ Session expired, re-logging in...")
                 driver.get(f"{KAJABI_URL}/login")
-                WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "username"))).send_keys(EMAIL)
-                driver.find_element(By.ID, "password").send_keys(PASSWORD)
+                WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "member_email"))).send_keys(EMAIL)
+                driver.find_element(By.ID, "member_password").send_keys(PASSWORD)
                 driver.find_element(By.XPATH, "//button[@type='submit']").click()
                 time.sleep(5)
                 driver.get(lesson_url)
                 WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-            # Updated selector - more flexible
-            video_btn = WebDriverWait(driver, 30).until(
-                EC.element_to_be_clickable((By.XPATH, '//button[contains(., "Video Actions") or contains(., "video actions")]'))
-            )
-            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", video_btn)
-            time.sleep(1)
-            video_btn.click()
-            print("    🔽 Clicked 'Video Actions' button.")
-            
-            video_link_elem = WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.XPATH, '//a[contains(@href, ".mp4") and contains(@class, "sage-dropdown__item-control--icon-download")]'))
-            )
-            video_url = video_link_elem.get_attribute("href")
+            # --- NUEVA LÓGICA DE EXTRACCIÓN WISTIA ---
+            video_url = None
+            try:
+                import json
+                import re
+                
+                # Obtenemos todo el HTML de la página
+                page_source = driver.page_source
+                
+                # Lista de patrones para encontrar el ID de Wistia
+                # Tu HTML tiene el ID en la clase: wistia_async_glxqbp7vs5
+                wistia_patterns = [
+                    r'wistia_async_([a-z0-9]+)',          # Detecta: class="... wistia_async_ID ..."
+                    r'wistia\.com/medias/([a-z0-9]+)',    # Detecta: URL estándar
+                    r'embed/medias/([a-z0-9]+)\.',        # Detecta: src=".../embed/medias/ID.m3u8"
+                    r'wistia_embed\s+([^"\s]+)'           # Detecta: id="wistia_ID"
+                ]
 
-            download_dir = os.path.dirname(video_path)
-            driver.execute("send_command", {
-                'cmd': 'Page.setDownloadBehavior',
-                'params': {'behavior': 'allow', 'downloadPath': download_dir}
-            })
+                wistia_id = None
+                for pattern in wistia_patterns:
+                    match = re.search(pattern, page_source)
+                    if match:
+                        wistia_id = match.group(1)
+                        # Limpiar si el ID capturó algo extra por error (ej: wistia_glxqbp7vs5 -> glxqbp7vs5)
+                        if "wistia_" in wistia_id:
+                            wistia_id = wistia_id.replace("wistia_", "")
+                        print(f"    🎥 Found Wistia video ID: {wistia_id}")
+                        break
+                
+                if wistia_id:
+                    # Llamar a la API de Wistia para obtener el MP4 real
+                    wistia_api_url = f"https://fast.wistia.net/embed/medias/{wistia_id}.json"
+                    headers_api = {'Referer': lesson_url, 'User-Agent': 'Mozilla/5.0'} 
+                    response = requests.get(wistia_api_url, headers=headers_api)
+                    
+                    if response.status_code == 200:
+                        video_data = response.json()
+                        assets = video_data.get('media', {}).get('assets', [])
+                        
+                        # Filtrar solo archivos mp4 (evitar m3u8 o imágenes)
+                        mp4_assets = [
+                            a for a in assets 
+                            if (a.get('type') == 'original' or a.get('container') == 'mp4') 
+                            and a.get('type') != 'still_image'
+                        ]
+                        
+                        if mp4_assets:
+                            # Ordenar por tamaño de archivo (size) descendente para obtener la mejor calidad
+                            mp4_assets.sort(key=lambda x: x.get('size', 0), reverse=True)
+                            video_url = mp4_assets[0].get('url')
+                            # Asegurar que el enlace sea .bin o .mp4 y no .m3u8
+                            if video_url.endswith('.bin'):
+                                video_url = video_url.replace('.bin', '.mp4')
+                            
+                            print(f"    ✅ Extracted Wistia video URL (Quality: {mp4_assets[0].get('display_name')})")
+                    else:
+                        print(f"    ⚠️ Wistia API error: {response.status_code}")
 
-            driver.execute_script(f"window.open('{video_url}', '_blank');")
-            time.sleep(2)
-            driver.switch_to.window(driver.window_handles[-1])
+            except Exception as e:
+                print(f"    ⚠️ Error extracting Wistia video: {e}")
 
-            max_wait = 120
-            waited = 0
-            while not os.path.exists(video_path) and waited < max_wait:
-                time.sleep(1)
-                waited += 1
-                partial_files = [f for f in os.listdir(download_dir) if f.endswith('.crdownload') or f.startswith(os.path.splitext(video_filename)[0])]
-                if partial_files:
-                    print(f"    ℹ️ Download in progress: {partial_files[0]}")
+            # Fallback: Try traditional Kajabi video button if Wistia failed
+            if not video_url:
+                try:
+                    print("    Trying fallback 'Video Actions' button...")
+                    video_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, '//button[contains(., "Video Actions") or contains(., "video actions")]'))
+                    )
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", video_btn)
+                    time.sleep(1)
+                    video_btn.click()
+                    
+                    video_link_elem = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.XPATH, '//a[contains(@href, ".mp4") and contains(@class, "download")]'))
+                    )
+                    video_url = video_link_elem.get_attribute("href")
+                except Exception as e:
+                    pass # Fallback failed silently
+
+            if not video_url:
+                raise Exception("Could not find video URL via Wistia or Download Button")
+
+            # Download video using requests
+            print(f"    📥 Downloading video from URL...")
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            with requests.get(video_url, stream=True, headers=headers, timeout=TIMEOUT) as r:
+                r.raise_for_status()
+                total_length = int(r.headers.get('content-length', 0))
+                progress = tqdm(total=total_length, unit='B', unit_scale=True, desc=video_filename, leave=False)
+                with open(video_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            progress.update(len(chunk))
+                progress.close()
 
             if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                 print(f"    ✅ Downloaded video: {video_filename}")
                 status = get_lesson_status(course_title, module_title, lesson_title)
                 new_status = {"Description": status[0], "Thumbnail": status[1], "Video": "Success", "Material": status[3]}
                 log_status(course_title, module_title, lesson_title, new_status)
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
                 return True
             else:
                 print(f"    ❌ Download failed: File not found or empty at {video_path}")
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
                 raise Exception("Download incomplete")
         except TimeoutException as e:
-            print(f"    ❌ Timeout error on attempt {attempt + 1}/{MAX_RETRIES}: {e}")
-            with open("debug_log.txt", "a") as f:
-                f.write(f"Timeout in selenium_download_video: {driver.page_source[:1000]}\n")
+            print(f"    ❌ Timeout error on attempt {attempt + 1}/{MAX_RETRIES}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(5)
                 driver.refresh()
         except Exception as e:
             print(f"    ❌ Error downloading video {video_filename}: {e}")
-            with open("debug_log.txt", "a") as f:
-                traceback.print_exc(file=f)
-            if len(driver.window_handles) > 1:
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
             if attempt < MAX_RETRIES - 1:
                 time.sleep(5)
                 driver.refresh()
@@ -249,40 +311,65 @@ def login_to_kajabi():
     DRIVER.get(f"{KAJABI_URL}/login")
 
     try:
-        WebDriverWait(DRIVER, 30).until(EC.presence_of_element_located((By.ID, "username"))).send_keys(EMAIL)
-        DRIVER.find_element(By.ID, "password").send_keys(PASSWORD)
+        WebDriverWait(DRIVER, 30).until(EC.presence_of_element_located((By.ID, "member_email"))).send_keys(EMAIL)
+        DRIVER.find_element(By.ID, "member_password").send_keys(PASSWORD)
         DRIVER.find_element(By.XPATH, "//button[@type='submit']").click()
         time.sleep(5)
-        if "dashboard" in DRIVER.current_url or "admin" in DRIVER.current_url:
-            print("✅ Logged into Kajabi successfully!")
+        if "library" in DRIVER.current_url or "dashboard" in DRIVER.current_url or "admin" in DRIVER.current_url:
+            print("Logged into Kajabi successfully!")
             return DRIVER
         else:
-            print("❌ Login failed. Check credentials or 2FA.")
+            print("Login failed. Check credentials or 2FA.")
             DRIVER.quit()
             return None
     except Exception as e:
-        print(f"❌ Login error: {e}")
+        print(f"Login error: {e}")
+        with open("debug_log.txt", "a", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
         DRIVER.quit()
         return None
 
 def get_all_courses(driver):
-    print("🔍 Navigating to courses page...")
-    driver.get("https://app.kajabi.com/admin/sites/100181/courses")
+    print("Navigating to library page...")
+    driver.get(f"{KAJABI_URL}/library")
     time.sleep(5)
 
-    course_cards = driver.find_elements(By.CSS_SELECTOR, "li.sage-catalog-item")
+    # Use Kajabi student library selectors
+    course_cards = driver.find_elements(By.CSS_SELECTOR, "div.product")
+
+    if not course_cards:
+        print("Could not find courses. Saving page source for debugging...")
+        with open("debug_library_page.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        print("Page source saved to debug_library_page.html")
+        return []
+
+    print(f"Found {len(course_cards)} products in library")
+
     courses = []
     for card in course_cards:
         try:
-            title_elem = card.find_element(By.CSS_SELECTOR, "span.t-sage--truncate")
-            link_elem = card.find_element(By.CSS_SELECTOR, "a.sage-link")
+            title_elem = card.find_element(By.CSS_SELECTOR, "h4.product__title")
             title = title_elem.text.strip()
-            url = link_elem.get_attribute("href")
 
-            print(f"🟢 Found course: {title}")
+            # Get the link - try to find any link first
+            try:
+                link_elem = card.find_element(By.CSS_SELECTOR, "a[href*='/products/']")
+                url = link_elem.get_attribute("href")
+            except:
+                # Might be a community or other item, skip it
+                print(f"Skipping non-course item: {title}")
+                continue
+
+            # Double-check: Skip community/non-course items
+            if "/communities/" in url:
+                print(f"Skipping community item: {title}")
+                continue
+
+            print(f"Found course: {title}")
             courses.append({
                 "title": title,
-                "url": "https://app.kajabi.com" + url if url.startswith("/") else url
+                "url": url if url.startswith("http") else f"{KAJABI_URL}{url}"
             })
 
             safe_title = "".join(c if c.isalnum() or c in " _-–" else "_" for c in title)[:200]
@@ -290,8 +377,8 @@ def get_all_courses(driver):
             os.makedirs(course_path, exist_ok=True)
 
         except Exception as e:
-            print(f"⚠️ Error reading course card: {e}")
-            with open("debug_log.txt", "a") as f:
+            print(f"Error reading course card: {e}")
+            with open("debug_log.txt", "a", encoding="utf-8") as f:
                 traceback.print_exc(file=f)
 
     return courses
@@ -317,7 +404,7 @@ def download_file_safe(url, local_path, label=None):
             time.sleep(3)
         except Exception as e:
             print(f"    ❌ Download error {label}: {e}. Attempt {attempt + 1}/{MAX_RETRIES}")
-            with open("debug_log.txt", "a") as f:
+            with open("debug_log.txt", "a", encoding="utf-8") as f:
                 traceback.print_exc(file=f)
             time.sleep(3)
     FAILED_DOWNLOADS.append({"file": label, "url": url, "error": "Max retries exceeded"})
@@ -490,112 +577,179 @@ def process_lesson(driver, lesson_url, lesson_title, lesson_path, lesson_counter
     log_status(course_title, module_title, safe_lesson_base, status)
 
 def get_modules_and_lessons(driver, course_url, course_folder, course_title):
-    print(f"\n📘 Scraping modules + lessons from course: {course_url}")
+    print(f"\nScraping modules + lessons from course: {course_url}")
     for attempt in range(MAX_RETRIES):
         try:
             driver.get(course_url)
             WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             time.sleep(4)
 
-            try:
-                expand_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, '//button[.//span[contains(text(), "Expand All")]]')))
-                expand_btn.click()
-                print("    🔼 Clicked 'Expand All' button.")
-                time.sleep(2)
-            except:
-                print("    ℹ️ 'Expand All' button not found.")
-
+            # Student interface uses different structure
             lessons = []
-            current_module_title = None
-            module_path = None
             module_counter = 1
             lesson_counter = 1
-
             completed_lessons = get_completed_lessons()
 
-            outline_items = WebDriverWait(driver, 30).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'section.kjb-outlinelist-item'))
-            )
-            for index, item in enumerate(outline_items):
-                class_name = item.get_attribute("class")
+            # Find all module categories (h3.product-outline-category)
+            category_headers = driver.find_elements(By.CSS_SELECTOR, 'h3.product-outline-category')
 
-                if "kjb-outlinelist-item--category" in class_name:
-                    current_module_title = item.find_element(By.CSS_SELECTOR, 'span.sage-btn__truncate-text').text.strip()
+            if not category_headers:
+                print("Could not find any modules. Saving page source for debugging...")
+                with open("debug_course_page.html", "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                print("Page source saved to debug_course_page.html")
+                return
+
+            print(f"Found {len(category_headers)} modules")
+
+            for category_header in category_headers:
+                try:
+                    # Extract module title - try multiple selectors
+                    try:
+                        module_title_elem = category_header.find_element(By.CSS_SELECTOR, 'div.media-body a')
+                        current_module_title = module_title_elem.text.strip()
+                    except NoSuchElementException:
+                        # Fallback: try getting text from the entire category header
+                        try:
+                            current_module_title = category_header.text.strip().split('\n')[0]
+                        except:
+                            print("    ⚠️ Could not extract module title, skipping...")
+                            continue
+
+                    # Skip empty titles
+                    if not current_module_title:
+                        continue
+
                     module_folder_name = f"{module_counter:02d} - {current_module_title}"
                     safe_module = "".join(c if c.isalnum() or c in " _-–" else "_" for c in module_folder_name)[:200]
                     module_path = os.path.join(course_folder, safe_module)
                     os.makedirs(module_path, exist_ok=True)
-                    print(f"\n📂 Module: {module_folder_name}")
+                    print(f"\nModule: {module_folder_name}")
+
+                    # Get the data-target to find corresponding lessons
+                    data_target = category_header.get_attribute('data-target')
+                    if data_target:
+                        category_id = data_target.replace('#', '')
+
+                        # Find all lesson links within this category
+                        lesson_links = driver.find_elements(By.CSS_SELECTOR, f'div#{category_id} a.product-outline-post')
+
+                        lesson_counter = 1
+                        for lesson_link in lesson_links:
+                            try:
+                                lesson_url = lesson_link.get_attribute('href')
+                                lesson_title_elem = lesson_link.find_element(By.CSS_SELECTOR, 'div.media-body')
+                                lesson_title = lesson_title_elem.text.strip()
+
+                                # Skip empty titles
+                                if not lesson_title or not lesson_url:
+                                    continue
+
+                                safe_lesson_base = f"{lesson_counter:02d} - {lesson_title}"
+                                safe_lesson_base = "".join(c if c.isalnum() or c in " _-–" else "_" for c in safe_lesson_base)[:200]
+                                lesson_key = f"{course_title}|{current_module_title}|{safe_lesson_base}"
+
+                                desc_status, thumb_status, video_status, mat_status = get_lesson_status(course_title, current_module_title, safe_lesson_base)
+                                if lesson_key in completed_lessons and all(s in ["Success", "None"] for s in [desc_status, thumb_status, video_status, mat_status]):
+                                    print(f"    Already downloaded. Skipping lesson: {safe_lesson_base}")
+                                    lesson_counter += 1
+                                    continue
+
+                                print(f"  Lesson: {safe_lesson_base}")
+                                lesson_path = os.path.join(module_path, safe_lesson_base)
+                                os.makedirs(lesson_path, exist_ok=True)
+                                lessons.append((lesson_url, lesson_title, lesson_path, lesson_counter, safe_lesson_base, current_module_title))
+                                lesson_counter += 1
+
+                            except Exception as e:
+                                print(f"    Error processing lesson: {e}")
+                                continue
+
                     module_counter += 1
-                    lesson_counter = 1
 
-                elif "kjb-outlinelist-item--depth-1" in class_name and module_path:
-                    lesson_title = item.find_element(By.CSS_SELECTOR, 'span.sage-btn__truncate-text').text.strip()
-                    lesson_link = item.find_element(By.CSS_SELECTOR, 'a[href*="/admin/posts/"]').get_attribute("href")
-                    safe_lesson_base = f"{lesson_counter:02d} - {lesson_title}"
-                    safe_lesson_base = "".join(c if c.isalnum() or c in " _-–" else "_" for c in safe_lesson_base)[:200]
-                    lesson_key = f"{course_title}|{current_module_title}|{safe_lesson_base}"
+                except Exception as e:
+                    print(f"Error processing module: {e}")
+                    continue
 
-                    desc_status, thumb_status, video_status, mat_status = get_lesson_status(course_title, current_module_title, safe_lesson_base)
-                    if lesson_key in completed_lessons and all(s in ["Success", "None"] for s in [desc_status, thumb_status, video_status, mat_status]):
-                        print(f"    ⏭️ Already downloaded. Skipping lesson: {safe_lesson_base}")
-                        lesson_counter += 1
-                        continue
+            print(f"\nTotal lessons to download: {len(lessons)}")
 
-                    print(f"  🎓 Lesson: {safe_lesson_base}")
-                    lesson_path = os.path.join(module_path, safe_lesson_base)
-                    os.makedirs(lesson_path, exist_ok=True)
-                    lessons.append((lesson_link, lesson_title, lesson_path, lesson_counter, safe_lesson_base, current_module_title))
-                    lesson_counter += 1
+            # Process lessons sequentially (not in parallel) to avoid conflicts with Selenium
+            for lesson_data in lessons:
+                process_lesson(driver, lesson_data[0], lesson_data[1], lesson_data[2], lesson_data[3], lesson_data[4], course_title, lesson_data[5])
 
-            with ThreadPoolExecutor(max_workers=MAX_LESSON_THREADS) as executor:
-                executor.map(lambda args: process_lesson(driver, args[0], args[1], args[2], args[3], args[4], course_title, args[5]), lessons)
             return
 
         except TimeoutException as e:
-            print(f"    ❌ Timeout error on attempt {attempt + 1}/{MAX_RETRIES}: {e}")
-            with open("debug_log.txt", "a") as f:
+            print(f"    Timeout error on attempt {attempt + 1}/{MAX_RETRIES}: {e}")
+            with open("debug_log.txt", "a", encoding="utf-8") as f:
                 f.write(f"Timeout in get_modules_and_lessons: {driver.page_source[:1000]}\n")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(5)
                 driver.refresh()
         except Exception as e:
-            print(f"    ⚠️ Error parsing course: {e}")
-            with open("debug_log.txt", "a") as f:
+            print(f"    Error parsing course: {e}")
+            with open("debug_log.txt", "a", encoding="utf-8") as f:
                 traceback.print_exc(file=f)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(5)
                 driver.refresh()
-    print(f"    ❌ Failed to scrape course after {MAX_RETRIES} attempts.")
+    print(f"    Failed to scrape course after {MAX_RETRIES} attempts.")
     FAILED_DOWNLOADS.append({"file": course_title, "url": course_url, "error": "Failed to scrape modules"})
 
-if __name__ == "__main__":
+def _run_full_download():
     start_time = time.time()
-
     driver = login_to_kajabi()
     if driver:
         courses = get_all_courses(driver)
-        print(f"\n📘 Found {len(courses)} courses.")
-
+        print(f"\nFound {len(courses)} courses.")
         for course in courses:
             course_title = course["title"]
             course_url = course["url"]
-            safe_course = "".join(c if c.isalnum() or c in " _-–" else "_" for c in course_title)[:200]
+            safe_course = "".join(c if c.isalnum() or c in " _-" else "_" for c in course_title)[:200]
             course_folder = os.path.join(BASE_DIR, safe_course)
             os.makedirs(course_folder, exist_ok=True)
-
-            print(f"\n🚀 Processing course: {course_title}")
+            print(f"\n==> Processing course: {course_title}")
             get_modules_and_lessons(driver, course_url, course_folder, course_title)
-
         driver.quit()
-
-    end_time = time.time()
-    print(f"\n⏱️ Total time: {round(end_time - start_time, 2)} seconds")
-
+    print(f"\nTotal time: {round(time.time() - start_time, 2)} seconds")
     if FAILED_DOWNLOADS:
         with open("download_errors.txt", "w", encoding="utf-8") as f:
             for fail in FAILED_DOWNLOADS:
                 f.write(f"[FAILED] {fail.get('file', fail.get('title'))}\nURL: {fail['url']}\nError: {fail['error']}\n\n")
-        print(f"\n⚠️ Some downloads failed. Logged in 'download_errors.txt'")
+        print("\nSome downloads failed. Logged in 'download_errors.txt'")
     else:
-        print("\n✅ All downloads completed without errors.")
+        print("\nAll downloads completed without errors.")
+
+
+def _build_argparser():
+    import argparse
+    cfg_manifest = config.get("Sync", "manifest_path", fallback="sync_manifest.json")
+    cfg_staging = config.get("Sync", "staging_dir", fallback="staging")
+    cfg_report = config.get("Sync", "report_path", fallback="sync_report.md")
+    cfg_seed = config.get("Sync", "seed_csv", fallback="download_log.csv")
+
+    p = argparse.ArgumentParser(description="Descargador y sincronizador de cursos Kajabi")
+    sub = p.add_subparsers(dest="command")
+
+    def add_common(sp):
+        sp.add_argument("--manifest", default=cfg_manifest)
+        sp.add_argument("--report", default=cfg_report)
+        sp.add_argument("--staging-dir", dest="staging_dir", default=cfg_staging)
+        sp.add_argument("--seed-csv", dest="seed_csv", default=cfg_seed)
+        sp.add_argument("--course", action="append", default=[])
+        sp.add_argument("--deep", action="store_true")
+        sp.add_argument("--headless", action="store_true")
+        sp.add_argument("--dry-run", dest="dry_run", action="store_true")
+        sp.add_argument("--yes", action="store_true")
+
+    for name in ("scan", "diff", "sync"):
+        add_common(sub.add_parser(name))
+    return p
+
+
+if __name__ == "__main__":
+    _args = _build_argparser().parse_args()
+    if _args.command in ("scan", "diff", "sync"):
+        from kjsync import cli
+        raise SystemExit(getattr(cli, f"cmd_{_args.command}")(_args))
+    _run_full_download()
