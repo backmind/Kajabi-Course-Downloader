@@ -148,7 +148,7 @@ def transcode_file(src, dst, cmd):
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode == 0 and os.path.exists(dst) and os.path.getsize(dst) > 0:
             return True
-        if os.path.exists(dst) and os.path.getsize(dst) == 0:
+        if os.path.exists(dst):
             os.remove(dst)
         return False
     except Exception:
