@@ -40,3 +40,34 @@ def choose_encoder(preferred, available):
         if enc in available:
             return enc
     return None
+
+
+def quality_args(encoder, crf, cq, preset):
+    if encoder == "libx265":
+        return ["-c:v", "libx265", "-preset", preset or "medium", "-crf", str(crf), "-tag:v", "hvc1"]
+    if encoder == "hevc_nvenc":
+        return ["-c:v", "hevc_nvenc", "-preset", preset or "p5", "-rc", "vbr", "-cq", str(cq), "-tag:v", "hvc1"]
+    if encoder == "hevc_qsv":
+        return ["-c:v", "hevc_qsv", "-global_quality", str(cq), "-tag:v", "hvc1"]
+    if encoder == "hevc_amf":
+        return ["-c:v", "hevc_amf", "-quality", "balanced", "-qp_i", str(cq), "-qp_p", str(cq), "-tag:v", "hvc1"]
+    return ["-c:v", encoder, "-tag:v", "hvc1"]
+
+
+def build_ffmpeg_cmd(src, dst, encoder, crf=23, cq=28, preset=None, metadata_args=None):
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-i", src]
+    cmd += quality_args(encoder, crf, cq, preset)
+    cmd += ["-c:a", "copy"]
+    if metadata_args:
+        cmd += list(metadata_args)
+    cmd += [dst]
+    return cmd
+
+
+def output_name(src_name, tag):
+    stem, ext = os.path.splitext(src_name)
+    return f"{stem} [{tag}]{ext}"
+
+
+def already_transcoded(src_name, tag):
+    return f"[{tag}]" in src_name
